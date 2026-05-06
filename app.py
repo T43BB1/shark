@@ -1,6 +1,7 @@
 import json
 import os
 from flask import Flask, render_template_string, request
+from collection import get_collection_items
 
 try:
     from google import genai
@@ -333,6 +334,57 @@ button:hover { filter: brightness(1.08); transform: translateY(-1px); }
     background: rgba(255,255,255,0.92);
     color: #020617;
 }
+
+.collection-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 14px;
+    margin-top: 18px;
+}
+
+.name-card {
+    padding: 18px;
+    border-radius: 20px;
+    background: rgba(255,255,255,0.11);
+    border: 1px solid rgba(255,255,255,0.18);
+    cursor: pointer;
+}
+
+.name-card.locked {
+    opacity: 0.35;
+    filter: grayscale(1);
+    cursor: default;
+}
+
+.name-card h4 {
+    margin: 0 0 8px;
+}
+
+.collection-detail {
+    position: fixed;
+    inset: 0;
+    display: none;
+    z-index: 10000;
+    background: rgba(2,6,23,0.72);
+    backdrop-filter: blur(10px);
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
+}
+
+.collection-detail.active {
+    display: flex;
+}
+
+.collection-detail-card {
+    max-width: 560px;
+    width: 100%;
+    padding: 28px;
+    border-radius: 28px;
+    background: rgba(15,23,42,0.96);
+    border: 1px solid rgba(255,255,255,0.18);
+}
+
 @keyframes swim { 0%, 100% { transform: translateX(0) rotate(-5deg); } 50% { transform: translateX(34px) rotate(5deg); } }
 @media (max-width: 760px) { .grid { grid-template-columns: 1fr; } .nav { align-items: flex-start; flex-direction: column; } .viz-ui { left: 24px; right: 24px; text-align: left; } }
 </style>
@@ -341,6 +393,7 @@ button:hover { filter: brightness(1.08); transform: translateY(-1px); }
 <div class="container">
     <div class="nav">
         <div class="logo">🦈 Shark Mood Analysis</div>
+        <a href="#collection">Collection</a>
     </div>
 
     <section class="hero" id="analyze">
@@ -384,6 +437,23 @@ button:hover { filter: brightness(1.08); transform: translateY(-1px); }
     {% endif %}
 </div>
 
+<section class="card" id="collection" style="margin-top: 22px;">
+    <h3>Shark Collection</h3>
+    <p class="meta">
+        감정 분석을 통해 발견한 상어 네임카드가 이곳에 수집됩니다.
+    </p>
+    <div id="collectionGrid" class="collection-grid"></div>
+</section>
+
+<div id="collectionDetail" class="collection-detail">
+    <div class="collection-detail-card">
+        <button onclick="closeCollectionDetail()">닫기</button>
+        <h2 id="detailTitle"></h2>
+        <p id="detailSummary" class="meta"></p>
+        <div id="detailBody" class="meta"></div>
+    </div>
+</div>
+
 <div class="visualizer-modal" id="visualizerModal">
     <canvas id="sharkCanvas"></canvas>
     <div class="viz-ui">
@@ -395,7 +465,85 @@ button:hover { filter: brightness(1.08); transform: translateY(-1px); }
 </div>
 
 <script>
+const collectionData = {{ collection_json | safe }};
+const COLLECTION_KEY = "sharkMoodCollection";
+
+function getCollectedSharks() {
+    try {
+        return JSON.parse(localStorage.getItem(COLLECTION_KEY)) || [];
+    } catch {
+        return [];
+    }
+}
+
+function saveCollectedSharks(items) {
+    localStorage.setItem(COLLECTION_KEY, JSON.stringify([...new Set(items)]));
+}
+
+function collectCurrentShark() {
+    if (!currentMood || !currentMood.key) return;
+
+    const collected = getCollectedSharks();
+    if (!collected.includes(currentMood.key)) {
+        collected.push(currentMood.key);
+        saveCollectedSharks(collected);
+    }
+}
+
+function renderCollection() {
+    const grid = document.getElementById("collectionGrid");
+    if (!grid) return;
+
+    const collected = getCollectedSharks();
+    grid.innerHTML = "";
+
+    Object.entries(collectionData).forEach(([key, item]) => {
+        const isCollected = collected.includes(key);
+
+        const card = document.createElement("div");
+        card.className = `name-card ${isCollected ? "" : "locked"}`;
+        card.style.borderColor = isCollected ? item.color : "rgba(255,255,255,0.18)";
+
+        card.innerHTML = `
+            <h4>${isCollected ? item.title : "???"}</h4>
+            <p class="meta">${isCollected ? item.species : "아직 발견하지 못한 상어입니다."}</p>
+            <span class="badge">${isCollected ? item.mood : "Locked"}</span>
+        `;
+
+        if (isCollected) {
+            card.onclick = () => openCollectionDetail(key);
+        }
+
+        grid.appendChild(card);
+    });
+}
+
+function openCollectionDetail(key) {
+    const item = collectionData[key];
+    if (!item) return;
+
+    document.getElementById("detailTitle").textContent = item.title;
+    document.getElementById("detailSummary").textContent = item.summary;
+    document.getElementById("detailBody").innerHTML = `
+        <p><strong>Species:</strong> ${item.species}</p>
+        <p><strong>Mood:</strong> ${item.mood}</p>
+        <p><strong>Habitat:</strong> ${item.habitat}</p>
+        <p><strong>Personality:</strong> ${item.personality}</p>
+        <p><strong>Keywords:</strong> ${item.keywords.join(", ")}</p>
+        <p style="margin-top: 14px;">${item.description}</p>
+    `;
+
+    document.getElementById("collectionDetail").classList.add("active");
+}
+
+function closeCollectionDetail() {
+    document.getElementById("collectionDetail").classList.remove("active");
+}
+
 const currentMood = {{ current_mood_json | safe }};
+
+collectCurrentShark();
+renderCollection();
 
 function openVisualizer() {
     const modal = document.getElementById("visualizerModal");
@@ -412,6 +560,7 @@ let animationId = null;
 let particles = [];
 let bgParticles = [];
 let lines = [];
+let backgroundSharks = [];
 let canvas, ctx, W, H;
 
 function resizeCanvas() {
@@ -628,61 +777,270 @@ function makeSpeciesShape(species, cx, cy, scale) {
     ];
 }
 
+function getSharkConfig(species) {
+    const base = {
+        bodyLength: 3.2,
+        bodyHeight: 0.55,
+        bodyCount: 520,
+        headLength: 0.75,
+        headHeight: 0.5,
+        headCount: 130,
+        tailStemLength: 0.75,
+        tailStemHeight: 0.18,
+        tailFinLength: 0.75,
+        tailFinHeight: 0.62,
+        dorsalX: -0.55,
+        dorsalWidth: 0.8,
+        dorsalHeight: 1.1,
+        dorsalCount: 95,
+        pectoralX: 0.05,
+        pectoralLength: 0.95,
+        pectoralHeight: 0.75,
+        pectoralCount: 95,
+    };
+
+    const configs = {
+        "Whale Shark": {
+            ...base,
+            bodyLength: 3.7,
+            bodyHeight: 0.82,
+            bodyCount: 720,
+            headLength: 0.9,
+            headHeight: 0.72,
+            tailStemHeight: 0.14,
+            dorsalHeight: 0.72,
+            pectoralHeight: 0.62,
+        },
+        "Great White Shark": {
+            ...base,
+            bodyLength: 3.45,
+            bodyHeight: 0.6,
+            headLength: 1.05,
+            headHeight: 0.42,
+            dorsalHeight: 1.35,
+            tailFinHeight: 0.8,
+        },
+        "Hammerhead Shark": {
+            ...base,
+            bodyLength: 3.0,
+            bodyHeight: 0.47,
+            headLength: 0.52,
+            headHeight: 0.38,
+            dorsalHeight: 0.95,
+            tailFinHeight: 0.68,
+        },
+        "Mako Shark": {
+            ...base,
+            bodyLength: 3.8,
+            bodyHeight: 0.38,
+            bodyCount: 460,
+            headLength: 1.15,
+            headHeight: 0.32,
+            dorsalHeight: 1.1,
+            tailStemLength: 0.95,
+            tailFinHeight: 0.72,
+        },
+        "Nurse Shark": {
+            ...base,
+            bodyLength: 3.25,
+            bodyHeight: 0.5,
+            headLength: 0.9,
+            headHeight: 0.48,
+            dorsalHeight: 0.55,
+            pectoralHeight: 0.48,
+            tailFinHeight: 0.5,
+        },
+        "Greenland Shark": {
+            ...base,
+            bodyLength: 3.45,
+            bodyHeight: 0.68,
+            bodyCount: 620,
+            headLength: 0.8,
+            headHeight: 0.52,
+            dorsalHeight: 0.45,
+            tailFinHeight: 0.5,
+        },
+        "Leopard Shark": {
+            ...base,
+            bodyLength: 3.25,
+            bodyHeight: 0.43,
+            headLength: 0.75,
+            headHeight: 0.36,
+            dorsalHeight: 0.8,
+            pectoralHeight: 0.58,
+        },
+    };
+
+    return configs[species] || base;
+}
+
+
+
 function createParticles(mood) {
     particles = [];
     bgParticles = [];
     lines = [];
 
-    const cx = W * 0.48;
-    const cy = H * 0.53;
-    const scale = Math.min(W, H) * 0.095;
-    const shape = makeSpeciesShape(mood.shark_name, cx, cy, scale);
+    const cx = W * 0.46;
+    const cy = H * 0.55;
+    const s = Math.min(W, H) * 0.11;
 
-    const minX = Math.min(...shape.map(p => p.x));
-    const maxX = Math.max(...shape.map(p => p.x));
-    const minY = Math.min(...shape.map(p => p.y));
-    const maxY = Math.max(...shape.map(p => p.y));
+    const species = mood.shark_name;
 
-    const count = mood.shark_name === "Whale Shark" ? 430 : 360;
-    let attempts = 0;
-    while (particles.length < count && attempts < count * 120) {
-        attempts++;
-        const p = { x: rand(minX, maxX), y: rand(minY, maxY) };
-        if (pointInPolygon(p, shape)) {
-            particles.push({
-                x: p.x,
-                y: p.y,
-                baseX: p.x,
-                baseY: p.y,
-                vx: rand(-0.22, 0.22),
-                vy: rand(-0.18, 0.18),
-                size: rand(1.3, 3.1),
-                phase: rand(0, Math.PI * 2),
-            });
+    const config = getSharkConfig(species);
+
+    function addParticle(x, y, sizeMin = 1.4, sizeMax = 3.1) {
+        particles.push({
+            x,
+            y,
+            baseX: x,
+            baseY: y,
+            vx: rand(-0.12, 0.12),
+            vy: rand(-0.1, 0.1),
+            size: rand(sizeMin, sizeMax),
+            phase: rand(0, Math.PI * 2),
+        });
+    }
+
+    // 몸통: 실제 상어처럼 앞쪽이 두껍고 뒤로 갈수록 얇아지는 spindle 형태
+    for (let i = 0; i < config.bodyCount; i++) {
+        const u = rand(-1, 1); // -1 tail side, +1 head side
+        const taper = Math.sqrt(1 - u * u);
+        const headBias = 1 + 0.28 * Math.max(u, 0);
+        const bodyHeight = config.bodyHeight * taper * headBias;
+
+        const x = cx + u * config.bodyLength * s;
+        const y = cy + rand(-bodyHeight, bodyHeight) * s;
+
+        addParticle(x, y);
+    }
+
+    // 머리: 종별로 둥글거나 뾰족하게
+    for (let i = 0; i < config.headCount; i++) {
+        const r = Math.sqrt(Math.random());
+        const angle = rand(-Math.PI * 0.55, Math.PI * 0.55);
+        const x = cx + config.bodyLength * s + Math.cos(angle) * r * config.headLength * s;
+        const y = cy + Math.sin(angle) * r * config.headHeight * s;
+        addParticle(x, y);
+    }
+
+    // 꼬리 줄기
+    for (let i = 0; i < 90; i++) {
+        const u = rand(0, 1);
+        const x = cx - config.bodyLength * s - u * config.tailStemLength * s;
+        const h = (1 - u) * config.tailStemHeight * s + 4;
+        const y = cy + rand(-h, h);
+        addParticle(x, y, 1.1, 2.5);
+    }
+
+    // 꼬리 지느러미 상/하
+    for (let i = 0; i < 110; i++) {
+        const u = rand(0, 1);
+        const side = Math.random() > 0.5 ? 1 : -1;
+        const x = cx - (config.bodyLength + config.tailStemLength) * s - u * config.tailFinLength * s;
+        const y = cy + side * (u * config.tailFinHeight * s + rand(-5, 5));
+        addParticle(x, y, 1.1, 2.4);
+    }
+
+    // 등지느러미
+    for (let i = 0; i < config.dorsalCount; i++) {
+        const u = rand(0, 1);
+        const x = cx + (config.dorsalX + u * config.dorsalWidth) * s;
+        const peak = Math.sin(u * Math.PI);
+        const y = cy - (config.bodyHeight * 0.75 + peak * config.dorsalHeight) * s;
+        addParticle(x, y, 1.2, 2.8);
+    }
+
+    // 가슴지느러미
+    for (let i = 0; i < config.pectoralCount; i++) {
+        const u = rand(0, 1);
+        const x = cx + (config.pectoralX - u * config.pectoralLength) * s;
+        const y = cy + (config.bodyHeight * 0.55 + Math.sin(u * Math.PI) * config.pectoralHeight) * s;
+        addParticle(x, y, 1.2, 2.6);
+    }
+
+    // 귀상어 머리 T자 강조
+    if (species === "Hammerhead Shark") {
+        for (let i = 0; i < 150; i++) {
+            const x = cx + (config.bodyLength + 0.28) * s + rand(-0.18, 0.18) * s;
+            const y = cy + rand(-1.15, 1.15) * s;
+            addParticle(x, y, 1.2, 2.7);
         }
     }
 
-    for (let i = 0; i < 260; i++) {
+    // 고래상어 점무늬 느낌
+    if (species === "Whale Shark") {
+        for (let i = 0; i < 120; i++) {
+            const u = rand(-0.75, 0.85);
+            const taper = Math.sqrt(1 - u * u);
+            const x = cx + u * config.bodyLength * s;
+            const y = cy + rand(-config.bodyHeight * taper, config.bodyHeight * taper) * s;
+            addParticle(x, y, 2.2, 4.3);
+        }
+    }
+
+    // 배경 입자
+    for (let i = 0; i < 280; i++) {
         bgParticles.push({
             x: rand(0, W),
             y: rand(0, H),
             vx: rand(-0.08, 0.08),
             vy: rand(-0.05, 0.05),
-            size: rand(0.8, 2.4),
+            size: rand(0.8, 2.2),
         });
     }
 
+    // 가까운 점끼리 연결
     for (let i = 0; i < particles.length; i++) {
         const near = [];
         for (let j = i + 1; j < particles.length; j++) {
             const dx = particles[i].x - particles[j].x;
             const dy = particles[i].y - particles[j].y;
-            const d = Math.sqrt(dx*dx + dy*dy);
-            if (d < scale * 0.75) near.push({j, d});
+            const d = Math.sqrt(dx * dx + dy * dy);
+            if (d < s * 0.34) near.push({ j, d });
         }
         near.sort((a, b) => a.d - b.d);
         near.slice(0, 4).forEach(n => lines.push([i, n.j, n.d]));
     }
+}
+
+function createBackgroundSharks() {
+    backgroundSharks = [];
+
+    const collected = getCollectedSharks();
+
+    collected.forEach((key, index) => {
+        const item = collectionData[key];
+        if (!item) return;
+
+        // 현재 메인 상어는 배경에서 제외
+        if (currentMood && currentMood.key === key) return;
+
+        const moodLike = {
+            shark_name: item.species,
+            shark_name_ko: item.title,
+            primary: item.color || "#ffffff",
+            secondary: "#0f172a",
+        };
+
+        const scale = Math.min(W, H) * 0.025;
+        const startX = rand(-W * 0.2, W * 1.1);
+        const startY = rand(H * 0.18, H * 0.82);
+        const shape = makeSpeciesShape(moodLike.shark_name, startX, startY, scale);
+
+        backgroundSharks.push({
+            key,
+            mood: moodLike,
+            shape,
+            x: startX,
+            y: startY,
+            scale,
+            speed: rand(0.08, 0.22),
+            drift: rand(0.0012, 0.0024),
+            phase: rand(0, Math.PI * 2),
+            alpha: rand(0.28, 0.46),
+        });
+    });
 }
 
 function drawBackground(mood, t) {
@@ -837,6 +1195,62 @@ function drawSpeciesDetails(mood, t, moveX, moveY) {
     ctx.restore();
 }
 
+function drawBackgroundSharks(t) {
+    backgroundSharks.forEach(shark => {
+    shark.x += shark.speed;
+
+    if (shark.x > W + 180) {
+        shark.x = -180;
+        shark.baseY = rand(H * 0.18, H * 0.82);
+    }
+
+    if (!shark.baseY) shark.baseY = shark.y;
+
+        const swimX = Math.sin(t * shark.drift + shark.phase) * 24;
+        const swimY = Math.sin(t * shark.drift * 0.75 + shark.phase) * 16;
+        const roll = Math.sin(t * shark.drift * 0.55 + shark.phase) * 0.04;
+
+        ctx.save();
+        ctx.globalAlpha = shark.alpha;
+        ctx.globalAlpha = shark.alpha * 2.2;
+        ctx.strokeStyle = "rgba(255,255,255,0.9)";
+        ctx.fillStyle = "rgba(255,255,255,0.95)";
+        ctx.shadowBlur = 18;
+
+        const movedShape = makeSpeciesShape(
+            shark.mood.shark_name,
+            shark.x + swimX,
+            shark.baseY + swimY,
+            shark.scale
+);
+
+        // 외곽선
+        ctx.beginPath();
+        movedShape.forEach((p, i) => {
+            if (i === 0) ctx.moveTo(p.x, p.y);
+            else ctx.lineTo(p.x, p.y);
+        });
+        ctx.closePath();
+        ctx.stroke();
+
+        // 내부 점들
+        for (let i = 0; i < 28; i++) {
+            const p = movedShape[Math.floor(Math.random() * movedShape.length)];
+            const q = movedShape[Math.floor(Math.random() * movedShape.length)];
+
+            const x = (p.x + q.x) / 2 + rand(-8, 8);
+            const y = (p.y + q.y) / 2 + rand(-8, 8);
+
+            ctx.beginPath();
+            ctx.arc(x, y, rand(0.8, 1.8), 0, Math.PI * 2);
+            ctx.fill();
+        }
+
+        ctx.restore();
+    });
+}
+
+
 function drawShark(mood, t) {
     const speedFactor = mood.shark_name === "Mako Shark" ? 1.8 : mood.shark_name === "Nurse Shark" ? 0.45 : 1;
     const moveX = Math.sin(t * 0.001 * speedFactor) * 12;
@@ -872,6 +1286,7 @@ function drawShark(mood, t) {
 
 function animate(t) {
     drawBackground(currentMood, t);
+    drawBackgroundSharks(t);
     drawShark(currentMood, t);
     animationId = requestAnimationFrame(animate);
 }
@@ -880,7 +1295,10 @@ function startSharkVisualizer(mood) {
     resizeCanvas();
     document.getElementById("vizPill").textContent = mood.shark_name_ko;
     document.getElementById("vizSubtitle").textContent = mood.message;
+
     createParticles(mood);
+    createBackgroundSharks();
+
     cancelAnimationFrame(animationId);
     animationId = requestAnimationFrame(animate);
 }
@@ -906,7 +1324,9 @@ def index():
     result = None
     percents = {}
     analysis = None
-    current_mood = MOODS[DEFAULT_KEY]
+    # current_mood = MOODS[DEFAULT_KEY]
+    current_mood = dict(MOODS[DEFAULT_KEY])
+    current_mood["key"] = DEFAULT_KEY
 
     if request.method == "POST":
         text = request.form.get("text", "").strip()
@@ -914,7 +1334,9 @@ def index():
         main_key = analysis["main_key"]
         result = MOODS[main_key]
         percents = analysis["percents"]
-        current_mood = result
+        # current_mood = result
+        current_mood = dict(result)
+        current_mood["key"] = main_key
 
     return render_template_string(
         HTML,
@@ -924,6 +1346,8 @@ def index():
         moods=MOODS,
         analysis=analysis,
         current_mood_json=json.dumps(current_mood, ensure_ascii=False),
+        collection_items=get_collection_items(),
+        collection_json=json.dumps(get_collection_items(), ensure_ascii=False),
     )
 
 
