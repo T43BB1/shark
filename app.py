@@ -94,6 +94,8 @@ MOODS = {
 
 DEFAULT_KEY = "calm"
 ALLOWED_MOODS = list(MOODS.keys())
+COLLECTION_ITEMS = get_collection_items()
+ALLOWED_SHARK_KEYS = list(COLLECTION_ITEMS.keys())
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 
@@ -137,6 +139,10 @@ def normalize_ai_result(data: dict):
     if main_key not in ALLOWED_MOODS:
         main_key = DEFAULT_KEY
 
+    shark_key = data.get("shark_key", main_key)
+    if shark_key not in ALLOWED_SHARK_KEYS:
+        shark_key = main_key
+
     raw_scores = data.get("scores", {}) or {}
     scores = {}
     for key in ALLOWED_MOODS:
@@ -154,6 +160,8 @@ def normalize_ai_result(data: dict):
     except (TypeError, ValueError):
         confidence = 70
 
+
+
     return {
         "main_key": main_key,
         "percents": scores,
@@ -162,6 +170,7 @@ def normalize_ai_result(data: dict):
         "tone": data.get("tone", "contextual"),
         "recommended_action": data.get("recommended_action", "지금 감정을 짧게 기록해두면 좋아요!"),
         "source": "AI analysis result",
+        "shark_key": shark_key,
     }
 
 
@@ -193,7 +202,8 @@ def analyze_mood_gemini(text: str):
             "reason": {"type": "string"},
             "recommended_action": {"type": "string"},
         },
-        "required": ["main_mood", "scores", "confidence", "tone", "reason", "recommended_action"],
+        "shark_key": {"type": "string", "enum": ALLOWED_SHARK_KEYS},
+        "required": ["main_mood", "shark_key", "scores", "confidence", "tone", "reason", "recommended_action"],
     }
 
     prompt = f"""
@@ -214,6 +224,16 @@ def analyze_mood_gemini(text: str):
 - 장난감 프로젝트용 분석이므로 의학적 진단처럼 쓰지 마.
 - reason과 recommended_action은 한국어로 짧고 부드럽게 써.
 - scores는 각 감정별 0~100 정수로 써.
+
+main_mood는 감정 카테고리이고, shark_key는 해당 감정에 어울리는 실제 상어 카드 key야.
+반드시 shark_key는 아래 목록 중 하나로 골라.
+
+{ALLOWED_SHARK_KEYS}
+
+예:
+- 우울하지만 거대하고 천천히 흘러가는 느낌이면 sad_3
+- 깊고 차가운 침잠이면 sad
+- 외롭고 기괴한 심해 느낌이면 sad_2
 
 분석할 문장:
 {text}
@@ -1589,7 +1609,20 @@ def index():
         text = request.form.get("text", "").strip()
         analysis = analyze_mood_gemini(text)
         main_key = analysis["main_key"]
-        result = MOODS[main_key]
+        shark_key = analysis.get("shark_key", main_key)
+
+        collection_item = get_collection_item(shark_key)
+        base_mood = MOODS[main_key]
+
+        result = {
+            **base_mood,
+            "key": shark_key,
+            "shark_name": collection_item["species"],
+            "shark_name_ko": collection_item["title"],
+            "emoji": collection_item.get("emoji", "🦈"),
+            "primary": collection_item.get("color", base_mood["primary"]),
+            "message": collection_item.get("summary", base_mood["message"]),
+}
         percents = analysis["percents"]
         # 퍼센테이지에 따라 컬렉션 키 결정
         pct = percents.get(main_key, 0)
@@ -1603,7 +1636,7 @@ def index():
         if not get_collection_item(collection_key):
             collection_key = main_key
         current_mood = dict(result)
-        current_mood["key"] = collection_key
+        current_mood["key"] = shark_key
 
     return render_template_string(
         HTML,
