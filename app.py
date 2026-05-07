@@ -195,14 +195,14 @@ def analyze_mood_gemini(text: str):
             "scores": {
                 "type": "object",
                 "properties": {key: {"type": "integer"} for key in ALLOWED_MOODS},
-                "required": ALLOWED_MOODS,
+                "additionalProperties": False,
             },
             "confidence": {"type": "integer"},
             "tone": {"type": "string"},
             "reason": {"type": "string"},
             "recommended_action": {"type": "string"},
+            "shark_key": {"type": "string", "enum": ALLOWED_SHARK_KEYS},
         },
-        "shark_key": {"type": "string", "enum": ALLOWED_SHARK_KEYS},
         "required": ["main_mood", "shark_key", "scores", "confidence", "tone", "reason", "recommended_action"],
     }
 
