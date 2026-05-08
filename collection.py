@@ -241,6 +241,18 @@ SHARK_COLLECTION = {
         "keywords": ["흥분", "점프", "에너지", "회전"],
         "description": "스피너상어는 먹이를 쫓을 때 물 밖으로 뛰어올라 회전하는 독특한 사냥법을 씁니다.",
     },
+    "excited_3": {
+        "title": "환도상어(설렘)",
+        "species": "Thresher Shark",
+        "mood": "Excited",
+        "emoji": "🔥",
+        "summary": "긴 꼬리를 힘차게 휘두르며 돌진하는 환도상어처럼, 지금의 에너지는 무엇이든 해낼 수 있어요.",
+        "color": "#f59e0b",
+        "habitat": "외해와 연안",
+        "personality": "폭발적 에너지, 전력질주, 몰입",
+        "keywords": ["폭발", "몰입", "전력", "도약"],
+        "description": "환도상어는 몸길이의 절반에 달하는 긴 꼬리지느러미를 채찍처럼 휘둘러 먹이를 사냥합니다.",
+    },
 }
 
 
