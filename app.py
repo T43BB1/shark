@@ -251,9 +251,12 @@ main_mood는 감정 카테고리이고, shark_key는 해당 감정에 어울리�
         )
         data = json.loads(response.text)
         return normalize_ai_result(data)
-    except Exception:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         fallback = analyze_mood_keyword(text)
-        fallback["reason"] = "AI 분석이 일시적으로 불가하여 키워드 방식으로 분석했습니다."
+        fallback["reason"] = f"AI 분석 오류: {type(e).__name__}: {e}"
+        fallback["source"] = f"error: {type(e).__name__}"
         return fallback
 
 
@@ -1470,6 +1473,169 @@ function drawSpeciesDetails(mood, t, moveX, moveY) {
         grad.addColorStop(1, "rgba(180,190,255,0)");
         ctx.fillStyle = grad;
         ctx.fillRect(0, 0, W, H);
+    }
+
+    if (mood.shark_name === "Zebra Shark") {
+        ctx.strokeStyle = "rgba(255,255,255,0.45)";
+        ctx.lineWidth = 1.2;
+        for (let i = 0; i < 12; i++) {
+            const x = cx - s * 3 + i * s * 0.5;
+            ctx.beginPath();
+            ctx.moveTo(x, cy - s * 0.4 + Math.sin(t * 0.001 + i) * 3);
+            ctx.lineTo(x + s * 0.1, cy + s * 0.4 + Math.cos(t * 0.001 + i) * 3);
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Angel Shark") {
+        ctx.fillStyle = "rgba(255,255,200,0.35)";
+        for (let i = 0; i < 30; i++) {
+            const x = cx - s * 4 + Math.sin(i * 7.3 + t * 0.0005) * s * 4;
+            const y = cy + s * 0.6 + Math.cos(i * 5.1) * s * 0.3;
+            ctx.beginPath();
+            ctx.arc(x, y, s * 0.02, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    if (mood.shark_name === "Blue Shark") {
+        ctx.strokeStyle = "rgba(100,200,255,0.4)";
+        ctx.lineWidth = 1.3;
+        for (let i = 0; i < 5; i++) {
+            ctx.beginPath();
+            for (let x = -s * 5; x < s * 5; x += 8) {
+                const y = cy + i * s * 0.25 - s * 0.5 + Math.sin(x * 0.02 + t * 0.002 + i) * s * 0.08;
+                if (x === -s * 5) ctx.moveTo(cx + x, y);
+                else ctx.lineTo(cx + x, y);
+            }
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Port Jackson Shark") {
+        ctx.strokeStyle = "rgba(255,255,255,0.6)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx + s * 2.5, cy - s * 0.2, s * 0.4, -0.8, 0.8);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx + s * 2.5, cy + s * 0.2, s * 0.4, -0.8, 0.8);
+        ctx.stroke();
+    }
+
+    if (mood.shark_name === "Bull Shark") {
+        const ringR = (t * 0.03) % (s * 3);
+        const ringAlpha = Math.max(0, 0.5 - ringR / (s * 3));
+        ctx.strokeStyle = `rgba(248,113,113,${ringAlpha})`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    if (mood.shark_name === "Tiger Shark") {
+        ctx.strokeStyle = "rgba(255,255,255,0.3)";
+        ctx.lineWidth = 2.5;
+        for (let i = 0; i < 8; i++) {
+            const x = cx - s * 2 + i * s * 0.55;
+            const wave = Math.sin(t * 0.001 + i) * 2;
+            ctx.beginPath();
+            ctx.moveTo(x + wave, cy - s * 0.6);
+            ctx.quadraticCurveTo(x + s * 0.15, cy, x + wave, cy + s * 0.6);
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Goblin Shark") {
+        ctx.fillStyle = "rgba(200,180,255,0.6)";
+        for (let i = 0; i < 8; i++) {
+            const flicker = Math.sin(t * 0.003 + i * 2.1) * 0.3 + 0.5;
+            ctx.globalAlpha = flicker;
+            const x = cx + Math.cos(i * 0.8) * s * 2.5;
+            const y = cy + Math.sin(i * 1.2) * s * 1.2;
+            ctx.beginPath();
+            ctx.arc(x, y, s * 0.05, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    if (mood.shark_name === "Basking Shark") {
+        ctx.fillStyle = "rgba(200,255,200,0.4)";
+        for (let i = 0; i < 40; i++) {
+            const x = cx - s * 4 + ((i * 37 + t * 0.02) % (s * 8));
+            const y = cy - s * 1 + Math.sin(i * 3.7) * s * 1.5;
+            ctx.beginPath();
+            ctx.arc(x, y, s * 0.018, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    if (mood.shark_name === "Wobbegong Shark") {
+        ctx.strokeStyle = "rgba(255,255,255,0.25)";
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 15; i++) {
+            const x = cx - s * 3.5 + i * s * 0.48;
+            const y = cy + s * 0.3;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.quadraticCurveTo(x + s * 0.1, y + s * 0.15 + Math.sin(t * 0.002 + i) * 3, x + s * 0.24, y);
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Cookiecutter Shark") {
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 5; i++) {
+            const x = cx - s * 1.5 + i * s * 0.75;
+            const y = cy + Math.sin(t * 0.002 + i) * s * 0.1;
+            ctx.beginPath();
+            ctx.arc(x, y, s * 0.12, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Thresher Shark") {
+        ctx.strokeStyle = "rgba(255,255,255,0.4)";
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        for (let a = 0; a < Math.PI * 1.5; a += 0.1) {
+            const r = s * 1.5 + Math.sin(a * 3 + t * 0.003) * s * 0.2;
+            const x = cx - s * 4 + Math.cos(a) * r;
+            const y = cy + Math.sin(a) * r * 0.4;
+            if (a === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
+    if (mood.shark_name === "Saw Shark") {
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < 12; i++) {
+            const x = cx + s * 1.5 + i * s * 0.35;
+            const y = cy + (i % 2 === 0 ? -s * 0.1 : s * 0.1);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
+    if (mood.shark_name === "Spinner Shark") {
+        ctx.strokeStyle = "rgba(255,255,200,0.4)";
+        ctx.lineWidth = 1.5;
+        const spin = t * 0.003;
+        ctx.beginPath();
+        for (let a = 0; a < Math.PI * 2; a += 0.15) {
+            const r = s * 1.2 + Math.sin(a * 3 + spin) * s * 0.3;
+            const x = cx + Math.cos(a + spin) * r;
+            const y = cy + Math.sin(a + spin) * r * 0.5;
+            if (a === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
     }
 
     ctx.restore();
