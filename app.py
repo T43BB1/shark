@@ -195,7 +195,6 @@ def analyze_mood_gemini(text: str):
             "scores": {
                 "type": "object",
                 "properties": {key: {"type": "integer"} for key in ALLOWED_MOODS},
-                "additionalProperties": False,
             },
             "confidence": {"type": "integer"},
             "tone": {"type": "string"},
