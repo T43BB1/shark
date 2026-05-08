@@ -1,7 +1,7 @@
 import json
 import os
 from flask import Flask, render_template_string, request
-from collection import get_collection_items
+from collection import get_collection_items, get_collection_item
 
 try:
     from google import genai
@@ -179,22 +179,22 @@ def analyze_mood_gemini(text: str):
         fallback["reason"] = "GEMINI_API_KEY가 설정되어 있지 않아 키워드 방식으로 분석했습니다."
         return fallback
 
-    schema = {
-        "type": "object",
-        "properties": {
-            "main_mood": {"type": "string", "enum": ALLOWED_MOODS},
-            "scores": {
-                "type": "object",
-                "properties": {key: {"type": "integer"} for key in ALLOWED_MOODS},
-                "required": ALLOWED_MOODS,
-            },
-            "confidence": {"type": "integer"},
-            "tone": {"type": "string"},
-            "reason": {"type": "string"},
-            "recommended_action": {"type": "string"},
+    schema = types.Schema(
+        type=types.Type.OBJECT,
+        properties={
+            "main_mood": types.Schema(type=types.Type.STRING, enum=ALLOWED_MOODS),
+            "scores": types.Schema(
+                type=types.Type.OBJECT,
+                properties={key: types.Schema(type=types.Type.INTEGER) for key in ALLOWED_MOODS},
+                required=ALLOWED_MOODS,
+            ),
+            "confidence": types.Schema(type=types.Type.INTEGER),
+            "tone": types.Schema(type=types.Type.STRING),
+            "reason": types.Schema(type=types.Type.STRING),
+            "recommended_action": types.Schema(type=types.Type.STRING),
         },
-        "required": ["main_mood", "scores", "confidence", "tone", "reason", "recommended_action"],
-    }
+        required=["main_mood", "scores", "confidence", "tone", "reason", "recommended_action"],
+    )
 
     prompt = f"""
 너는 한국어 일기/짧은 문장을 읽고 현재 감정을 분석하는 감정 분류기야.
@@ -229,11 +229,15 @@ def analyze_mood_gemini(text: str):
                 response_schema=schema,
             ),
         )
+        print(f"[Gemini Response] {response.text}")
         data = json.loads(response.text)
         return normalize_ai_result(data)
-    except Exception as error:
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
         fallback = analyze_mood_keyword(text)
-        fallback["reason"] = f"Gemini 분석 중 오류가 발생하여 키워드 방식으로 분석했습니다. 오류: {error}"
+        fallback["reason"] = f"AI 분석 오류: {type(e).__name__}: {e}"
+        fallback["source"] = f"error: {type(e).__name__}"
         return fallback
 
 
@@ -414,14 +418,14 @@ button:hover { filter: brightness(1.08); transform: translateY(-1px); }
     <div class="grid">
         <section class="card">
             <span class="badge">{{ analysis.source }}</span>
-            <div class="mood-main">{{ result.emoji }} {{ result.shark_name_ko }}</div>
-            <p class="meta"><strong>Species:</strong> {{ result.shark_name }}</p>
+            <div class="mood-main">{{ display_mood.emoji }} {{ display_mood.shark_name_ko }}</div>
+            <p class="meta"><strong>Species:</strong> {{ display_mood.shark_name }}</p>
             <p class="meta"><strong>Mood:</strong> {{ result.label }}</p>
             <p class="meta"><strong>Confidence:</strong> {{ analysis.confidence }}%</p>
             <p class="meta"><strong>Tone:</strong> {{ analysis.tone }}</p>
             <p class="meta"><strong>Reason:</strong> {{ analysis.reason }}</p>
             <p class="meta"><strong>추천:</strong> {{ analysis.recommended_action }}</p>
-            <button class="comfort-btn" onclick="openVisualizer()">{{ result.shark_name_ko }}에게 위로받기</button>
+            <button class="comfort-btn" onclick="openVisualizer()">{{ display_mood.shark_name_ko }}에게 위로받기</button>
         </section>
 
         <section class="card" id="breakdown">
@@ -457,7 +461,7 @@ button:hover { filter: brightness(1.08); transform: translateY(-1px); }
 <div class="visualizer-modal" id="visualizerModal">
     <canvas id="sharkCanvas"></canvas>
     <div class="viz-ui">
-        <div class="viz-pill" id="vizPill">{{ result.shark_name_ko if result else '' }}</div>
+        <div class="viz-pill" id="vizPill">{{ display_mood.shark_name_ko if display_mood else '' }}</div>
         <div class="viz-title" id="vizTitle">shark mood visualizer</div>
         <div class="viz-subtitle" id="vizSubtitle">{{ result.message if result else '' }}</div>
     </div>
@@ -481,7 +485,7 @@ function saveCollectedSharks(items) {
 }
 
 function collectCurrentShark() {
-    if (!currentMood || !currentMood.key) return;
+    if (!currentMood || !currentMood.key || currentMood.key === null) return;
 
     const collected = getCollectedSharks();
     if (!collected.includes(currentMood.key)) {
@@ -505,7 +509,7 @@ function renderCollection() {
         card.style.borderColor = isCollected ? item.color : "rgba(255,255,255,0.18)";
 
         card.innerHTML = `
-            <h4>${isCollected ? item.title : "???"}</h4>
+            <h4>${isCollected ? (item.emoji || '') + ' ' + item.title : "???"}</h4>
             <p class="meta">${isCollected ? item.species : "아직 발견하지 못한 상어입니다."}</p>
             <span class="badge">${isCollected ? item.mood : "Locked"}</span>
         `;
@@ -522,9 +526,10 @@ function openCollectionDetail(key) {
     const item = collectionData[key];
     if (!item) return;
 
-    document.getElementById("detailTitle").textContent = item.title;
+    document.getElementById("detailTitle").textContent = (item.emoji || '') + ' ' + item.title;
     document.getElementById("detailSummary").textContent = item.summary;
     document.getElementById("detailBody").innerHTML = `
+        <div style="font-size:64px;text-align:center;margin:12px 0;">${item.emoji || '🦈'}</div>
         <p><strong>Species:</strong> ${item.species}</p>
         <p><strong>Mood:</strong> ${item.mood}</p>
         <p><strong>Habitat:</strong> ${item.habitat}</p>
@@ -757,6 +762,302 @@ function makeSpeciesShape(species, cx, cy, scale) {
         ];
     }
 
+    if (species === "Zebra Shark") {
+        // 제브라상어: 길고 유연한 몸, 긴 꼬리, 둥근 머리
+        return [
+            {x: cx - 5.2*s, y: cy - 0.1*s},
+            {x: cx - 4.2*s, y: cy - 0.52*s},
+            {x: cx - 2.5*s, y: cy - 0.58*s},
+            {x: cx - 0.8*s, y: cy - 0.92*s},
+            {x: cx - 0.1*s, y: cy - 0.52*s},
+            {x: cx + 1.8*s, y: cy - 0.42*s},
+            {x: cx + 3.5*s, y: cy - 0.22*s},
+            {x: cx + 4.5*s, y: cy + 0.05*s},
+            {x: cx + 3.6*s, y: cy + 0.38*s},
+            {x: cx + 1.5*s, y: cy + 0.55*s},
+            {x: cx - 0.5*s, y: cy + 0.52*s},
+            {x: cx - 2.2*s, y: cy + 0.48*s},
+            {x: cx - 3.8*s, y: cy + 0.35*s},
+            {x: cx - 5.0*s, y: cy + 0.72*s},
+            {x: cx - 4.6*s, y: cy + 0.05*s},
+            {x: cx - 5.4*s, y: cy - 0.65*s},
+        ];
+    }
+
+    if (species === "Angel Shark") {
+        // 엔젤상어: 납작하고 넓은 가오리형, 큰 가슴지느러미
+        return [
+            {x: cx - 4.0*s, y: cy - 0.05*s},
+            {x: cx - 3.2*s, y: cy - 0.35*s},
+            {x: cx - 1.8*s, y: cy - 0.38*s},
+            {x: cx - 0.5*s, y: cy - 0.55*s},
+            {x: cx + 0.8*s, y: cy - 0.42*s},
+            {x: cx + 2.2*s, y: cy - 0.85*s},
+            {x: cx + 3.8*s, y: cy - 0.35*s},
+            {x: cx + 4.5*s, y: cy + 0.05*s},
+            {x: cx + 3.8*s, y: cy + 0.4*s},
+            {x: cx + 2.2*s, y: cy + 0.9*s},
+            {x: cx + 0.8*s, y: cy + 0.48*s},
+            {x: cx - 0.5*s, y: cy + 0.58*s},
+            {x: cx - 1.8*s, y: cy + 0.42*s},
+            {x: cx - 3.2*s, y: cy + 0.38*s},
+            {x: cx - 4.2*s, y: cy + 0.55*s},
+            {x: cx - 3.8*s, y: cy + 0.05*s},
+            {x: cx - 4.2*s, y: cy - 0.48*s},
+        ];
+    }
+
+    if (species === "Blue Shark") {
+        // 블루상어: 길고 날씬한 유선형, 긴 가슴지느러미
+        return [
+            {x: cx - 5.0*s, y: cy - 0.02*s},
+            {x: cx - 4.0*s, y: cy - 0.48*s},
+            {x: cx - 2.2*s, y: cy - 0.52*s},
+            {x: cx - 0.6*s, y: cy - 1.25*s},
+            {x: cx + 0.0*s, y: cy - 0.48*s},
+            {x: cx + 2.5*s, y: cy - 0.35*s},
+            {x: cx + 5.0*s, y: cy - 0.02*s},
+            {x: cx + 3.2*s, y: cy + 0.32*s},
+            {x: cx + 1.0*s, y: cy + 0.45*s},
+            {x: cx - 0.2*s, y: cy + 0.85*s},
+            {x: cx - 1.5*s, y: cy + 1.25*s},
+            {x: cx - 1.3*s, y: cy + 0.42*s},
+            {x: cx - 3.5*s, y: cy + 0.35*s},
+            {x: cx - 5.2*s, y: cy + 0.82*s},
+            {x: cx - 4.5*s, y: cy + 0.05*s},
+            {x: cx - 5.3*s, y: cy - 0.78*s},
+        ];
+    }
+
+    if (species === "Port Jackson Shark") {
+        // 포트잭슨상어: 둥근 머리, 두꺼운 몸, 짧은 주둥이
+        return [
+            {x: cx - 4.2*s, y: cy + 0.02*s},
+            {x: cx - 3.3*s, y: cy - 0.55*s},
+            {x: cx - 1.5*s, y: cy - 0.72*s},
+            {x: cx - 0.3*s, y: cy - 1.05*s},
+            {x: cx + 0.3*s, y: cy - 0.68*s},
+            {x: cx + 2.0*s, y: cy - 0.55*s},
+            {x: cx + 3.5*s, y: cy - 0.28*s},
+            {x: cx + 4.2*s, y: cy + 0.08*s},
+            {x: cx + 3.5*s, y: cy + 0.42*s},
+            {x: cx + 2.0*s, y: cy + 0.62*s},
+            {x: cx + 0.2*s, y: cy + 0.72*s},
+            {x: cx - 1.5*s, y: cy + 0.65*s},
+            {x: cx - 2.5*s, y: cy + 0.88*s},
+            {x: cx - 2.3*s, y: cy + 0.42*s},
+            {x: cx - 3.5*s, y: cy + 0.42*s},
+            {x: cx - 4.5*s, y: cy + 0.72*s},
+            {x: cx - 3.9*s, y: cy + 0.05*s},
+            {x: cx - 4.5*s, y: cy - 0.55*s},
+        ];
+    }
+
+    if (species === "Bull Shark") {
+        // 황소상어: 두껍고 뭉툴한 몸, 짧고 둥근 주둥이, 큰 등지느러미
+        return [
+            {x: cx - 4.5*s, y: cy - 0.02*s},
+            {x: cx - 3.5*s, y: cy - 0.72*s},
+            {x: cx - 2.0*s, y: cy - 0.78*s},
+            {x: cx - 0.6*s, y: cy - 1.65*s},
+            {x: cx + 0.0*s, y: cy - 0.72*s},
+            {x: cx + 2.0*s, y: cy - 0.58*s},
+            {x: cx + 3.8*s, y: cy - 0.18*s},
+            {x: cx + 4.5*s, y: cy + 0.08*s},
+            {x: cx + 3.5*s, y: cy + 0.52*s},
+            {x: cx + 1.5*s, y: cy + 0.72*s},
+            {x: cx - 0.5*s, y: cy + 0.65*s},
+            {x: cx - 1.8*s, y: cy + 1.15*s},
+            {x: cx - 1.6*s, y: cy + 0.48*s},
+            {x: cx - 3.2*s, y: cy + 0.48*s},
+            {x: cx - 5.0*s, y: cy + 1.05*s},
+            {x: cx - 4.2*s, y: cy + 0.05*s},
+            {x: cx - 5.0*s, y: cy - 0.92*s},
+        ];
+    }
+
+    if (species === "Tiger Shark") {
+        // 타이거상어: 크고 두꺼운 몸, 둥근 주둥이, 넓은 꼬리
+        return [
+            {x: cx - 5.0*s, y: cy - 0.05*s},
+            {x: cx - 3.8*s, y: cy - 0.75*s},
+            {x: cx - 2.0*s, y: cy - 0.85*s},
+            {x: cx - 0.5*s, y: cy - 1.55*s},
+            {x: cx + 0.1*s, y: cy - 0.78*s},
+            {x: cx + 2.2*s, y: cy - 0.62*s},
+            {x: cx + 4.2*s, y: cy - 0.22*s},
+            {x: cx + 5.0*s, y: cy + 0.08*s},
+            {x: cx + 4.0*s, y: cy + 0.48*s},
+            {x: cx + 1.8*s, y: cy + 0.78*s},
+            {x: cx - 0.5*s, y: cy + 0.72*s},
+            {x: cx - 2.0*s, y: cy + 1.18*s},
+            {x: cx - 1.8*s, y: cy + 0.52*s},
+            {x: cx - 3.5*s, y: cy + 0.52*s},
+            {x: cx - 5.5*s, y: cy + 1.15*s},
+            {x: cx - 4.6*s, y: cy + 0.08*s},
+            {x: cx - 5.5*s, y: cy - 1.0*s},
+        ];
+    }
+
+    if (species === "Goblin Shark") {
+        // 고블린상어: 긴 주둥이가 앞으로 돌출, 얇은 몸
+        return [
+            {x: cx - 4.5*s, y: cy + 0.02*s},
+            {x: cx - 3.5*s, y: cy - 0.42*s},
+            {x: cx - 1.8*s, y: cy - 0.48*s},
+            {x: cx - 0.5*s, y: cy - 1.0*s},
+            {x: cx + 0.0*s, y: cy - 0.45*s},
+            {x: cx + 2.0*s, y: cy - 0.35*s},
+            {x: cx + 3.5*s, y: cy - 0.55*s},
+            {x: cx + 5.5*s, y: cy - 0.35*s},
+            {x: cx + 6.0*s, y: cy + 0.02*s},
+            {x: cx + 5.2*s, y: cy + 0.25*s},
+            {x: cx + 3.5*s, y: cy + 0.18*s},
+            {x: cx + 2.0*s, y: cy + 0.38*s},
+            {x: cx + 0.0*s, y: cy + 0.45*s},
+            {x: cx - 1.8*s, y: cy + 0.42*s},
+            {x: cx - 3.2*s, y: cy + 0.35*s},
+            {x: cx - 4.8*s, y: cy + 0.72*s},
+            {x: cx - 4.2*s, y: cy + 0.05*s},
+            {x: cx - 4.8*s, y: cy - 0.62*s},
+        ];
+    }
+
+    if (species === "Basking Shark") {
+        // 바스킹상어: 거대한 몸, 큰 입, 둥근 실루엿
+        return [
+            {x: cx - 4.8*s, y: cy - 0.15*s},
+            {x: cx - 3.8*s, y: cy - 0.85*s},
+            {x: cx - 2.0*s, y: cy - 1.1*s},
+            {x: cx + 0.2*s, y: cy - 1.05*s},
+            {x: cx + 2.5*s, y: cy - 0.75*s},
+            {x: cx + 4.2*s, y: cy - 0.35*s},
+            {x: cx + 5.0*s, y: cy + 0.05*s},
+            {x: cx + 4.5*s, y: cy + 0.55*s},
+            {x: cx + 2.5*s, y: cy + 0.92*s},
+            {x: cx + 0.0*s, y: cy + 1.05*s},
+            {x: cx - 2.0*s, y: cy + 0.88*s},
+            {x: cx - 3.5*s, y: cy + 0.55*s},
+            {x: cx - 4.8*s, y: cy + 0.95*s},
+            {x: cx - 4.3*s, y: cy + 0.15*s},
+            {x: cx - 5.1*s, y: cy - 0.85*s},
+        ];
+    }
+
+    if (species === "Wobbegong Shark") {
+        // 우바잉상어: 매우 납작하고 넓은 카펫형
+        return [
+            {x: cx - 4.0*s, y: cy + 0.05*s},
+            {x: cx - 3.2*s, y: cy - 0.25*s},
+            {x: cx - 1.5*s, y: cy - 0.3*s},
+            {x: cx - 0.3*s, y: cy - 0.48*s},
+            {x: cx + 0.8*s, y: cy - 0.32*s},
+            {x: cx + 2.5*s, y: cy - 0.65*s},
+            {x: cx + 4.2*s, y: cy - 0.28*s},
+            {x: cx + 4.8*s, y: cy + 0.05*s},
+            {x: cx + 4.2*s, y: cy + 0.32*s},
+            {x: cx + 2.5*s, y: cy + 0.7*s},
+            {x: cx + 0.8*s, y: cy + 0.38*s},
+            {x: cx - 0.3*s, y: cy + 0.52*s},
+            {x: cx - 1.5*s, y: cy + 0.35*s},
+            {x: cx - 3.0*s, y: cy + 0.28*s},
+            {x: cx - 4.2*s, y: cy + 0.45*s},
+            {x: cx - 3.8*s, y: cy + 0.08*s},
+            {x: cx - 4.2*s, y: cy - 0.35*s},
+        ];
+    }
+
+    if (species === "Cookiecutter Shark") {
+        // 쿠키커터상어: 작고 원통형, 짧은 주둥이
+        return [
+            {x: cx - 3.5*s, y: cy + 0.02*s},
+            {x: cx - 2.8*s, y: cy - 0.38*s},
+            {x: cx - 1.5*s, y: cy - 0.48*s},
+            {x: cx - 0.3*s, y: cy - 0.72*s},
+            {x: cx + 0.2*s, y: cy - 0.45*s},
+            {x: cx + 1.5*s, y: cy - 0.38*s},
+            {x: cx + 3.0*s, y: cy - 0.15*s},
+            {x: cx + 3.5*s, y: cy + 0.05*s},
+            {x: cx + 3.0*s, y: cy + 0.25*s},
+            {x: cx + 1.5*s, y: cy + 0.42*s},
+            {x: cx + 0.0*s, y: cy + 0.48*s},
+            {x: cx - 1.5*s, y: cy + 0.45*s},
+            {x: cx - 2.5*s, y: cy + 0.35*s},
+            {x: cx - 3.8*s, y: cy + 0.55*s},
+            {x: cx - 3.3*s, y: cy + 0.05*s},
+            {x: cx - 3.8*s, y: cy - 0.48*s},
+        ];
+    }
+
+    if (species === "Thresher Shark") {
+        // 환도상어: 몸길이의 절반인 긴 꼬리지느러미
+        return [
+            {x: cx - 6.5*s, y: cy - 0.8*s},
+            {x: cx - 5.5*s, y: cy - 0.15*s},
+            {x: cx - 4.5*s, y: cy - 0.05*s},
+            {x: cx - 3.2*s, y: cy - 0.48*s},
+            {x: cx - 1.5*s, y: cy - 0.52*s},
+            {x: cx - 0.3*s, y: cy - 1.15*s},
+            {x: cx + 0.2*s, y: cy - 0.48*s},
+            {x: cx + 2.0*s, y: cy - 0.38*s},
+            {x: cx + 4.0*s, y: cy - 0.05*s},
+            {x: cx + 3.0*s, y: cy + 0.35*s},
+            {x: cx + 1.0*s, y: cy + 0.48*s},
+            {x: cx - 1.0*s, y: cy + 0.42*s},
+            {x: cx - 2.5*s, y: cy + 0.82*s},
+            {x: cx - 2.2*s, y: cy + 0.35*s},
+            {x: cx - 3.8*s, y: cy + 0.32*s},
+            {x: cx - 5.0*s, y: cy + 0.15*s},
+            {x: cx - 6.5*s, y: cy + 0.55*s},
+        ];
+    }
+
+    if (species === "Saw Shark") {
+        // 톱상어: 긴 톱 모양 주둥이가 앞으로 돌출
+        return [
+            {x: cx - 4.2*s, y: cy + 0.02*s},
+            {x: cx - 3.2*s, y: cy - 0.38*s},
+            {x: cx - 1.5*s, y: cy - 0.42*s},
+            {x: cx - 0.3*s, y: cy - 0.82*s},
+            {x: cx + 0.2*s, y: cy - 0.4*s},
+            {x: cx + 2.0*s, y: cy - 0.32*s},
+            {x: cx + 3.5*s, y: cy - 0.18*s},
+            {x: cx + 5.0*s, y: cy - 0.12*s},
+            {x: cx + 6.2*s, y: cy + 0.0*s},
+            {x: cx + 5.0*s, y: cy + 0.12*s},
+            {x: cx + 3.5*s, y: cy + 0.2*s},
+            {x: cx + 2.0*s, y: cy + 0.35*s},
+            {x: cx + 0.2*s, y: cy + 0.42*s},
+            {x: cx - 1.5*s, y: cy + 0.4*s},
+            {x: cx - 3.0*s, y: cy + 0.32*s},
+            {x: cx - 4.5*s, y: cy + 0.58*s},
+            {x: cx - 3.9*s, y: cy + 0.05*s},
+            {x: cx - 4.5*s, y: cy - 0.52*s},
+        ];
+    }
+
+    if (species === "Spinner Shark") {
+        // 스피너상어: 날렵하고 긴 몸, 뾰족한 주둥이, 역동적 형태
+        return [
+            {x: cx - 5.0*s, y: cy - 0.02*s},
+            {x: cx - 4.0*s, y: cy - 0.52*s},
+            {x: cx - 2.2*s, y: cy - 0.55*s},
+            {x: cx - 0.8*s, y: cy - 1.35*s},
+            {x: cx - 0.1*s, y: cy - 0.5*s},
+            {x: cx + 2.0*s, y: cy - 0.38*s},
+            {x: cx + 4.5*s, y: cy - 0.05*s},
+            {x: cx + 3.2*s, y: cy + 0.35*s},
+            {x: cx + 1.2*s, y: cy + 0.48*s},
+            {x: cx - 0.8*s, y: cy + 0.42*s},
+            {x: cx - 1.8*s, y: cy + 0.95*s},
+            {x: cx - 1.6*s, y: cy + 0.35*s},
+            {x: cx - 3.5*s, y: cy + 0.35*s},
+            {x: cx - 5.2*s, y: cy + 0.85*s},
+            {x: cx - 4.5*s, y: cy + 0.05*s},
+            {x: cx - 5.3*s, y: cy - 0.82*s},
+        ];
+    }
+
     return [
         {x: cx - 4.3*s, y: cy + 0.05*s},
         {x: cx - 3.2*s, y: cy - 0.5*s},
@@ -864,11 +1165,25 @@ function getSharkConfig(species) {
             ...base,
             bodyLength: 3.25,
             bodyHeight: 0.43,
+            bodyCount: 480,
             headLength: 0.75,
             headHeight: 0.36,
             dorsalHeight: 0.8,
             pectoralHeight: 0.58,
         },
+        "Zebra Shark": { ...base, bodyCount: 500 },
+        "Angel Shark": { ...base, bodyCount: 550 },
+        "Blue Shark": { ...base, bodyCount: 460 },
+        "Port Jackson Shark": { ...base, bodyCount: 540 },
+        "Bull Shark": { ...base, bodyCount: 580 },
+        "Tiger Shark": { ...base, bodyCount: 650 },
+        "Goblin Shark": { ...base, bodyCount: 420 },
+        "Basking Shark": { ...base, bodyCount: 700 },
+        "Wobbegong Shark": { ...base, bodyCount: 480 },
+        "Cookiecutter Shark": { ...base, bodyCount: 350 },
+        "Thresher Shark": { ...base, bodyCount: 480 },
+        "Saw Shark": { ...base, bodyCount: 440 },
+        "Spinner Shark": { ...base, bodyCount: 460 },
     };
 
     return configs[species] || base;
@@ -886,98 +1201,47 @@ function createParticles(mood) {
     const s = Math.min(W, H) * 0.11;
 
     const species = mood.shark_name;
-
     const config = getSharkConfig(species);
+    const sharkOutline = makeSpeciesShape(species, cx, cy, s);
 
     function addParticle(x, y, sizeMin = 1.4, sizeMax = 3.1) {
         particles.push({
-            x,
-            y,
-            baseX: x,
-            baseY: y,
-            vx: rand(-0.12, 0.12),
-            vy: rand(-0.1, 0.1),
-            size: rand(sizeMin, sizeMax),
-            phase: rand(0, Math.PI * 2),
+            x, y, baseX: x, baseY: y,
+            vx: rand(-0.12, 0.12), vy: rand(-0.1, 0.1),
+            size: rand(sizeMin, sizeMax), phase: rand(0, Math.PI * 2),
         });
     }
 
-    // 몸통: 실제 상어처럼 앞쪽이 두껍고 뒤로 갈수록 얇아지는 spindle 형태
-    for (let i = 0; i < config.bodyCount; i++) {
-        const u = rand(-1, 1); // -1 tail side, +1 head side
-        const taper = Math.sqrt(1 - u * u);
-        const headBias = 1 + 0.28 * Math.max(u, 0);
-        const bodyHeight = config.bodyHeight * taper * headBias;
-
-        const x = cx + u * config.bodyLength * s;
-        const y = cy + rand(-bodyHeight, bodyHeight) * s;
-
-        addParticle(x, y);
-    }
-
-    // 머리: 종별로 둥글거나 뾰족하게
-    for (let i = 0; i < config.headCount; i++) {
-        const r = Math.sqrt(Math.random());
-        const angle = rand(-Math.PI * 0.55, Math.PI * 0.55);
-        const x = cx + config.bodyLength * s + Math.cos(angle) * r * config.headLength * s;
-        const y = cy + Math.sin(angle) * r * config.headHeight * s;
-        addParticle(x, y);
-    }
-
-    // 꼬리 줄기
-    for (let i = 0; i < 90; i++) {
-        const u = rand(0, 1);
-        const x = cx - config.bodyLength * s - u * config.tailStemLength * s;
-        const h = (1 - u) * config.tailStemHeight * s + 4;
-        const y = cy + rand(-h, h);
-        addParticle(x, y, 1.1, 2.5);
-    }
-
-    // 꼬리 지느러미 상/하
-    for (let i = 0; i < 110; i++) {
-        const u = rand(0, 1);
-        const side = Math.random() > 0.5 ? 1 : -1;
-        const x = cx - (config.bodyLength + config.tailStemLength) * s - u * config.tailFinLength * s;
-        const y = cy + side * (u * config.tailFinHeight * s + rand(-5, 5));
-        addParticle(x, y, 1.1, 2.4);
-    }
-
-    // 등지느러미
-    for (let i = 0; i < config.dorsalCount; i++) {
-        const u = rand(0, 1);
-        const x = cx + (config.dorsalX + u * config.dorsalWidth) * s;
-        const peak = Math.sin(u * Math.PI);
-        const y = cy - (config.bodyHeight * 0.75 + peak * config.dorsalHeight) * s;
-        addParticle(x, y, 1.2, 2.8);
-    }
-
-    // 가슴지느러미
-    for (let i = 0; i < config.pectoralCount; i++) {
-        const u = rand(0, 1);
-        const x = cx + (config.pectoralX - u * config.pectoralLength) * s;
-        const y = cy + (config.bodyHeight * 0.55 + Math.sin(u * Math.PI) * config.pectoralHeight) * s;
-        addParticle(x, y, 1.2, 2.6);
-    }
-
-    // 귀상어 머리 T자 강조
-    if (species === "Hammerhead Shark") {
-        for (let i = 0; i < 150; i++) {
-            const x = cx + (config.bodyLength + 0.28) * s + rand(-0.18, 0.18) * s;
-            const y = cy + rand(-1.15, 1.15) * s;
-            addParticle(x, y, 1.2, 2.7);
+    // 외곽선을 따라 밀도 높은 입자 배치
+    for (let i = 0; i < sharkOutline.length; i++) {
+        const a = sharkOutline[i];
+        const b = sharkOutline[(i + 1) % sharkOutline.length];
+        const segLen = Math.sqrt((b.x - a.x) ** 2 + (b.y - a.y) ** 2);
+        const count = Math.max(8, Math.floor(segLen / 3));
+        for (let j = 0; j < count; j++) {
+            const t = j / count;
+            addParticle(a.x + (b.x - a.x) * t + rand(-2, 2), a.y + (b.y - a.y) * t + rand(-2, 2), 1.5, 2.8);
         }
     }
 
-    // 고래상어 점무늬 느낌
-    if (species === "Whale Shark") {
-        for (let i = 0; i < 120; i++) {
-            const u = rand(-0.75, 0.85);
-            const taper = Math.sqrt(1 - u * u);
-            const x = cx + u * config.bodyLength * s;
-            const y = cy + rand(-config.bodyHeight * taper, config.bodyHeight * taper) * s;
-            addParticle(x, y, 2.2, 4.3);
+    // 내부를 채우는 입자 (outline 안에만)
+    const bounds = sharkOutline.reduce((acc, p) => ({
+        minX: Math.min(acc.minX, p.x), maxX: Math.max(acc.maxX, p.x),
+        minY: Math.min(acc.minY, p.y), maxY: Math.max(acc.maxY, p.y),
+    }), {minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity});
+
+    let filled = 0;
+    const targetFill = config.bodyCount || 520;
+    while (filled < targetFill) {
+        const px = rand(bounds.minX, bounds.maxX);
+        const py = rand(bounds.minY, bounds.maxY);
+        if (pointInPolygon({x: px, y: py}, sharkOutline)) {
+            addParticle(px, py, 1.2, 2.6);
+            filled++;
         }
     }
+
+
 
     // 배경 입자
     for (let i = 0; i < 280; i++) {
@@ -1192,6 +1456,182 @@ function drawSpeciesDetails(mood, t, moveX, moveY) {
         ctx.fillRect(0, 0, W, H);
     }
 
+    if (mood.shark_name === "Zebra Shark") {
+        // 제브라상어: 줄무늬→점무늬 패턴
+        ctx.strokeStyle = "rgba(255,255,255,0.45)";
+        ctx.lineWidth = 1.2;
+        for (let i = 0; i < 12; i++) {
+            const x = cx - s * 3 + i * s * 0.5;
+            ctx.beginPath();
+            ctx.moveTo(x, cy - s * 0.4 + Math.sin(t * 0.001 + i) * 3);
+            ctx.lineTo(x + s * 0.1, cy + s * 0.4 + Math.cos(t * 0.001 + i) * 3);
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Angel Shark") {
+        // 엔젤상어: 모래 입자 효과
+        ctx.fillStyle = "rgba(255,255,200,0.35)";
+        for (let i = 0; i < 30; i++) {
+            const x = cx - s * 4 + Math.sin(i * 7.3 + t * 0.0005) * s * 4;
+            const y = cy + s * 0.6 + Math.cos(i * 5.1) * s * 0.3;
+            ctx.beginPath();
+            ctx.arc(x, y, s * 0.02, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    if (mood.shark_name === "Blue Shark") {
+        // 블루상어: 물결 라인
+        ctx.strokeStyle = "rgba(100,200,255,0.4)";
+        ctx.lineWidth = 1.3;
+        for (let i = 0; i < 5; i++) {
+            ctx.beginPath();
+            for (let x = -s * 5; x < s * 5; x += 8) {
+                const y = cy + i * s * 0.25 - s * 0.5 + Math.sin(x * 0.02 + t * 0.002 + i) * s * 0.08;
+                if (x === -s * 5) ctx.moveTo(cx + x, y);
+                else ctx.lineTo(cx + x, y);
+            }
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Port Jackson Shark") {
+        // 포트잭슨상어: 이마 무늬 패턴
+        ctx.strokeStyle = "rgba(255,255,255,0.6)";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(cx + s * 2.5, cy - s * 0.2, s * 0.4, -0.8, 0.8);
+        ctx.stroke();
+        ctx.beginPath();
+        ctx.arc(cx + s * 2.5, cy + s * 0.2, s * 0.4, -0.8, 0.8);
+        ctx.stroke();
+    }
+
+    if (mood.shark_name === "Bull Shark") {
+        // 황소상어: 강한 충격파 링
+        const ringR = (t * 0.03) % (s * 3);
+        const ringAlpha = Math.max(0, 0.5 - ringR / (s * 3));
+        ctx.strokeStyle = `rgba(248,113,113,${ringAlpha})`;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(cx, cy, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
+    if (mood.shark_name === "Tiger Shark") {
+        // 타이거상어: 호랑이 줄무늬
+        ctx.strokeStyle = "rgba(255,255,255,0.3)";
+        ctx.lineWidth = 2.5;
+        for (let i = 0; i < 8; i++) {
+            const x = cx - s * 2 + i * s * 0.55;
+            const wave = Math.sin(t * 0.001 + i) * 2;
+            ctx.beginPath();
+            ctx.moveTo(x + wave, cy - s * 0.6);
+            ctx.quadraticCurveTo(x + s * 0.15, cy, x + wave, cy + s * 0.6);
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Goblin Shark") {
+        // 고블린상어: 심해 발광 점
+        ctx.fillStyle = "rgba(200,180,255,0.6)";
+        for (let i = 0; i < 8; i++) {
+            const flicker = Math.sin(t * 0.003 + i * 2.1) * 0.3 + 0.5;
+            ctx.globalAlpha = flicker;
+            const x = cx + Math.cos(i * 0.8) * s * 2.5;
+            const y = cy + Math.sin(i * 1.2) * s * 1.2;
+            ctx.beginPath();
+            ctx.arc(x, y, s * 0.05, 0, Math.PI * 2);
+            ctx.fill();
+        }
+        ctx.globalAlpha = 1;
+    }
+
+    if (mood.shark_name === "Basking Shark") {
+        // 바스킹상어: 플랑크톤 입자 흐름
+        ctx.fillStyle = "rgba(200,255,200,0.4)";
+        for (let i = 0; i < 40; i++) {
+            const x = cx - s * 4 + ((i * 37 + t * 0.02) % (s * 8));
+            const y = cy - s * 1 + Math.sin(i * 3.7) * s * 1.5;
+            ctx.beginPath();
+            ctx.arc(x, y, s * 0.018, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    if (mood.shark_name === "Wobbegong Shark") {
+        // 우바잉상어: 카펫 위장 패턴
+        ctx.strokeStyle = "rgba(255,255,255,0.25)";
+        ctx.lineWidth = 1;
+        for (let i = 0; i < 15; i++) {
+            const x = cx - s * 3.5 + i * s * 0.48;
+            const y = cy + s * 0.3;
+            ctx.beginPath();
+            ctx.moveTo(x, y);
+            ctx.quadraticCurveTo(x + s * 0.1, y + s * 0.15 + Math.sin(t * 0.002 + i) * 3, x + s * 0.24, y);
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Cookiecutter Shark") {
+        // 쿠키커터상어: 동그란 바이트 마크
+        ctx.strokeStyle = "rgba(255,255,255,0.5)";
+        ctx.lineWidth = 1.5;
+        for (let i = 0; i < 5; i++) {
+            const x = cx - s * 1.5 + i * s * 0.75;
+            const y = cy + Math.sin(t * 0.002 + i) * s * 0.1;
+            ctx.beginPath();
+            ctx.arc(x, y, s * 0.12, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    }
+
+    if (mood.shark_name === "Thresher Shark") {
+        // 환도상어: 꼬리 휘두르기 궤적
+        ctx.strokeStyle = "rgba(255,255,255,0.4)";
+        ctx.lineWidth = 1.8;
+        ctx.beginPath();
+        for (let a = 0; a < Math.PI * 1.5; a += 0.1) {
+            const r = s * 1.5 + Math.sin(a * 3 + t * 0.003) * s * 0.2;
+            const x = cx - s * 4 + Math.cos(a) * r;
+            const y = cy + Math.sin(a) * r * 0.4;
+            if (a === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
+    if (mood.shark_name === "Saw Shark") {
+        // 톱상어: 톱니 패턴
+        ctx.strokeStyle = "rgba(255,255,255,0.55)";
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        for (let i = 0; i < 12; i++) {
+            const x = cx + s * 1.5 + i * s * 0.35;
+            const y = cy + (i % 2 === 0 ? -s * 0.1 : s * 0.1);
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
+    if (mood.shark_name === "Spinner Shark") {
+        // 스피너상어: 회전 궤적
+        ctx.strokeStyle = "rgba(255,255,200,0.4)";
+        ctx.lineWidth = 1.5;
+        const spin = t * 0.003;
+        ctx.beginPath();
+        for (let a = 0; a < Math.PI * 2; a += 0.15) {
+            const r = s * 1.2 + Math.sin(a * 3 + spin) * s * 0.3;
+            const x = cx + Math.cos(a + spin) * r;
+            const y = cy + Math.sin(a + spin) * r * 0.5;
+            if (a === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+        }
+        ctx.stroke();
+    }
+
     ctx.restore();
 }
 
@@ -1211,8 +1651,7 @@ function drawBackgroundSharks(t) {
         const roll = Math.sin(t * shark.drift * 0.55 + shark.phase) * 0.04;
 
         ctx.save();
-        ctx.globalAlpha = shark.alpha;
-        ctx.globalAlpha = shark.alpha * 2.2;
+        ctx.globalAlpha = Math.min(1, shark.alpha * 2.2);
         ctx.strokeStyle = "rgba(255,255,255,0.9)";
         ctx.fillStyle = "rgba(255,255,255,0.95)";
         ctx.shadowBlur = 18;
@@ -1324,9 +1763,7 @@ def index():
     result = None
     percents = {}
     analysis = None
-    # current_mood = MOODS[DEFAULT_KEY]
-    current_mood = dict(MOODS[DEFAULT_KEY])
-    current_mood["key"] = DEFAULT_KEY
+    current_mood = {"key": None}
 
     if request.method == "POST":
         text = request.form.get("text", "").strip()
@@ -1334,9 +1771,29 @@ def index():
         main_key = analysis["main_key"]
         result = MOODS[main_key]
         percents = analysis["percents"]
-        # current_mood = result
+        # 퍼센테이지에 따라 컬렉션 키 결정
+        pct = percents.get(main_key, 0)
+        if pct >= 70:
+            collection_key = f"{main_key}_3"
+        elif pct >= 40:
+            collection_key = f"{main_key}_2"
+        else:
+            collection_key = main_key
+        # _3이나 _2가 컬렉션에 없으면 _2로, 그래도 없으면 기본으로 fallback
+        if not get_collection_item(collection_key):
+            fallback_key = f"{main_key}_2"
+            if get_collection_item(fallback_key):
+                collection_key = fallback_key
+            else:
+                collection_key = main_key
+        # 컬렉션 아이템에서 species 정보를 가져와 비주얼라이저에 전달
+        collection_item = get_collection_item(collection_key)
         current_mood = dict(result)
-        current_mood["key"] = main_key
+        current_mood["key"] = collection_key
+        if collection_item:
+            current_mood["shark_name"] = collection_item["species"]
+            current_mood["shark_name_ko"] = collection_item["title"]
+            current_mood["emoji"] = collection_item.get("emoji", result["emoji"])
 
     return render_template_string(
         HTML,
@@ -1346,6 +1803,7 @@ def index():
         moods=MOODS,
         analysis=analysis,
         current_mood_json=json.dumps(current_mood, ensure_ascii=False),
+        display_mood=current_mood if current_mood.get("shark_name") else result,
         collection_items=get_collection_items(),
         collection_json=json.dumps(get_collection_items(), ensure_ascii=False),
     )
