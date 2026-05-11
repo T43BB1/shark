@@ -21,6 +21,36 @@ app.config["WTF_CSRF_TIME_LIMIT"] = 3600  # 1 hour
 
 csrf = CSRFProtect(app)
 
+@app.route("/api/collection/list", methods=["POST"])
+def api_collection_list():
+    data = request.get_json(silent=True) or []
+    valid_cards = []
+
+    for item in data:
+        key = item.get("key")
+        sig = item.get("sig")
+
+        if not key or not sig:
+            continue
+
+        if key not in COLLECTION_ITEMS:
+            continue
+
+        if not hmac.compare_digest(sig, sign_shark_key(key)):
+            continue
+
+        shark = COLLECTION_ITEMS[key]
+        valid_cards.append({
+            "key": key,
+            "title": shark.get("title"),
+            "species": shark.get("species"),
+            "emoji": shark.get("emoji"),
+            "mood": shark.get("mood"),
+            "color": shark.get("color"),
+        })
+
+    return jsonify({"cards": valid_cards})
+
 
 @app.after_request
 def set_security_headers(response):
@@ -634,6 +664,33 @@ async function validateCollection() {
     } catch {}
 }
 
+async function loadUnlockedCardData() {
+    const collected = getCollectedSharks();
+
+    if (collected.length === 0) {
+        unlockedCardData = {};
+        return;
+    }
+
+    try {
+        const resp = await fetch('/api/collection/list', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+            body: JSON.stringify(collected),
+        });
+
+        if (!resp.ok) return;
+
+        const data = await resp.json();
+        unlockedCardData = {};
+
+        data.cards.forEach(card => {
+            unlockedCardData[card.key] = card;
+        });
+    } catch {
+        unlockedCardData = {};
+    }
+}
 function renderCollection() {
     const grid = document.getElementById("collectionGrid");
     if (!grid) return;
@@ -643,15 +700,15 @@ function renderCollection() {
 
     Object.entries(collectionData).forEach(([key, item]) => {
         const isCollected = collectedKeys.includes(key);
+        const unlocked = unlockedCardData[key];
 
         const card = document.createElement("div");
         card.className = `name-card ${isCollected ? "" : "locked"}`;
-        card.style.borderColor = isCollected ? item.color : "rgba(255,255,255,0.18)";
-
+        card.style.borderColor = isCollected && unlocked ? unlocked.color : "rgba(255,255,255,0.18)";
         card.innerHTML = `
-            <h4>${isCollected ? (item.emoji || '') + ' ' + item.title : "???"}</h4>
-            <p class="meta">${isCollected ? item.species : "아직 발견하지 못한 상어입니다."}</p>
-            <span class="badge">${isCollected ? item.mood : "Locked"}</span>
+            <h4>${isCollected && unlocked ? (unlocked.emoji || '') + ' ' + unlocked.title : "???"}</h4>
+            <p class="meta">${isCollected && unlocked ? unlocked.species : "아직 발견하지 못한 상어입니다."}</p>
+            <span class="badge">${isCollected && unlocked ? unlocked.mood : "Locked"}</span>
         `;
 
         if (isCollected) {
@@ -697,6 +754,7 @@ const currentMood = {{ current_mood_json | safe }};
 (async () => {
     await validateCollection();
     await collectCurrentShark();
+    await loadUnlockedCardData();
     renderCollection();
 })();
 
@@ -717,6 +775,7 @@ let bgParticles = [];
 let lines = [];
 let backgroundSharks = [];
 let canvas, ctx, W, H;
+let unlockedCardData = {};
 
 function resizeCanvas() {
     canvas = document.getElementById("sharkCanvas");
@@ -1943,7 +2002,17 @@ def index():
                 result=None, percents={}, moods=MOODS, analysis=None,
                 current_mood_json=json.dumps({"key": None}),
                 collection_items=get_collection_items(),
-                collection_json=json.dumps(get_collection_items(), ensure_ascii=False),
+                collection_json=json.dumps(
+                    {
+                        k: {
+                            "mood": v["mood"],
+                            "color": v["color"],
+                            "locked_label": "아직 발견하지 못한 상어입니다.",
+                        }
+                        for k, v in get_collection_items().items()
+                    },
+                    ensure_ascii=False,
+                ),
                 rate_limited=True,
                 eaten_by_shark=False,
             ), 429
@@ -1961,7 +2030,17 @@ def index():
                 result=None, percents={}, moods=MOODS, analysis=None,
                 current_mood_json=json.dumps({"key": None}),
                 collection_items=get_collection_items(),
-                collection_json=json.dumps(get_collection_items(), ensure_ascii=False),
+                collection_json=json.dumps(
+                    {
+                        k: {
+                            "mood": v["mood"],
+                            "color": v["color"],
+                            "locked_label": "아직 발견하지 못한 상어입니다.",
+                        }
+                        for k, v in get_collection_items().items()
+                    },
+                    ensure_ascii=False,
+                ),
                 rate_limited=False,
                 eaten_by_shark=True,
             )
@@ -2006,7 +2085,17 @@ def index():
         analysis=analysis,
         current_mood_json=json.dumps(current_mood, ensure_ascii=False),
         collection_items=get_collection_items(),
-        collection_json=json.dumps(get_collection_items(), ensure_ascii=False),
+        collection_json=json.dumps(
+            {
+                k: {
+                    "mood": v["mood"],
+                    "color": v["color"],
+                    "locked_label": "아직 발견하지 못한 상어입니다.",
+                }
+                for k, v in get_collection_items().items()
+            },
+            ensure_ascii=False,
+        ),
         rate_limited=False,
         eaten_by_shark=False,
     )
