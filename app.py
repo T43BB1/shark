@@ -1943,10 +1943,7 @@ def index():
                 result=None, percents={}, moods=MOODS, analysis=None,
                 current_mood_json=json.dumps({"key": None}),
                 collection_items=get_collection_items(),
-                collection_json=json.dumps(
-                    {k: {"mood": v["mood"], "color": v["color"]} for k, v in get_collection_items().items()},
-                    ensure_ascii=False,
-                ),
+                collection_json=json.dumps(get_collection_items(), ensure_ascii=False),
                 rate_limited=True,
                 eaten_by_shark=False,
             ), 429
@@ -1964,10 +1961,7 @@ def index():
                 result=None, percents={}, moods=MOODS, analysis=None,
                 current_mood_json=json.dumps({"key": None}),
                 collection_items=get_collection_items(),
-                collection_json=json.dumps(
-                    {k: {"mood": v["mood"], "color": v["color"]} for k, v in get_collection_items().items()},
-                    ensure_ascii=False,
-                ),
+                collection_json=json.dumps(get_collection_items(), ensure_ascii=False),
                 rate_limited=False,
                 eaten_by_shark=True,
             )
@@ -2012,10 +2006,7 @@ def index():
         analysis=analysis,
         current_mood_json=json.dumps(current_mood, ensure_ascii=False),
         collection_items=get_collection_items(),
-        collection_json=json.dumps(
-            {k: {"mood": v["mood"], "color": v["color"]} for k, v in get_collection_items().items()},
-            ensure_ascii=False,
-        ),
+        collection_json=json.dumps(get_collection_items(), ensure_ascii=False),
         rate_limited=False,
         eaten_by_shark=False,
     )
