@@ -1,6 +1,11 @@
 import json
 import os
-from flask import Flask, render_template_string, request
+import time
+import hmac
+import hashlib
+from collections import defaultdict
+from flask import Flask, render_template_string, request, jsonify, make_response
+from flask_wtf.csrf import CSRFProtect, generate_csrf
 from collection import get_collection_items, get_collection_item
 
 try:
@@ -11,6 +16,46 @@ except ImportError:
     types = None
 
 app = Flask(__name__)
+app.secret_key = os.getenv("SECRET_KEY", os.urandom(32).hex())
+app.config["WTF_CSRF_TIME_LIMIT"] = 3600  # 1 hour
+
+csrf = CSRFProtect(app)
+
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    if request.is_secure:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+# Collection token signing
+_COLLECTION_SECRET = os.getenv("COLLECTION_SECRET", app.secret_key)
+
+
+def sign_shark_key(key: str) -> str:
+    secret = _COLLECTION_SECRET.encode() if isinstance(_COLLECTION_SECRET, str) else _COLLECTION_SECRET
+    return hmac.new(secret, key.encode(), hashlib.sha256).hexdigest()[:16]
+
+
+# Rate limiting: IP당 분당 최대 요청 수
+RATE_LIMIT = int(os.getenv("RATE_LIMIT", "10"))
+RATE_WINDOW = 60  # seconds
+_request_log = defaultdict(list)
+
+
+def is_rate_limited(ip: str) -> bool:
+    now = time.time()
+    _request_log[ip] = [t for t in _request_log[ip] if now - t < RATE_WINDOW]
+    if len(_request_log[ip]) >= RATE_LIMIT:
+        return True
+    _request_log[ip].append(now)
+    return False
 
 MOODS = {
     "calm": {
@@ -97,6 +142,26 @@ ALLOWED_MOODS = list(MOODS.keys())
 COLLECTION_ITEMS = get_collection_items()
 ALLOWED_SHARK_KEYS = list(COLLECTION_ITEMS.keys())
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+# Prompt injection detection patterns
+_INJECTION_PATTERNS = [
+    "ignore previous", "ignore above", "ignore all", "disregard",
+    "forget your instructions", "forget previous", "forget all",
+    "you are now", "act as", "pretend to be", "roleplay as",
+    "system prompt", "reveal your prompt", "show me your prompt",
+    "override", "bypass", "jailbreak",
+    "do not follow", "don't follow",
+    "new instructions", "instead of",
+    "\n\n###", "```system", "[INST]", "<<SYS>>",
+    "이전 지시를 무시", "지시를 무시", "시스템 프롬프트",
+    "너는 이제", "역할을 바꿔", "프롬프트를 보여",
+    "명령을 무시", "지침을 무시", "규칙을 무시",
+]
+
+
+def detect_injection(text: str) -> bool:
+    lower = text.lower().replace("\r", "").strip()
+    return any(p in lower for p in _INJECTION_PATTERNS)
 
 
 def analyze_mood_keyword(text: str):
@@ -427,9 +492,34 @@ button:hover { filter: brightness(1.08); transform: translateY(-1px); }
         </p>
         <div class="shark-swim">🦈</div>
         <form method="POST">
-            <textarea name="text" placeholder="예: 오늘 먹구름이 신경쓰이네.">{{ text }}</textarea>
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+            <textarea name="text" placeholder="예: 오늘 먹구름이 신경쓰이네." maxlength="500">{{ text }}</textarea>
             <button>내 상어 찾기</button>
         </form>
+        {% if rate_limited %}
+        <p style="color:#f87171;margin-top:12px;font-weight:700;">⚠️ 요청이 너무 많아요. 잠시 후 다시 시도해주세요.</p>
+        {% endif %}
+        {% if eaten_by_shark %}
+        <div id="sharkAttack" style="margin-top:24px;padding:32px;border-radius:24px;background:rgba(127,29,29,0.85);border:2px solid #f87171;text-align:center;">
+            <div style="font-size:100px;animation:chomp 0.6s ease-in-out infinite;">🦈</div>
+            <h2 style="margin:16px 0 8px;color:#fca5a5;">우걱우걱... 냠냠...</h2>
+            <p style="color:#fecaca;font-size:18px;line-height:1.7;">
+                프롬프트 인젝션을 시도하셨군요!<br>
+                백상아리가 당신의 입력을 맛있게 먹어치웠습니다. 🦷
+            </p>
+            <p style="color:rgba(255,255,255,0.6);font-size:14px;margin-top:12px;">
+                감정을 솔직하게 적어주시면 상어가 위로해줄 거예요.
+            </p>
+        </div>
+        <style>
+        @keyframes chomp {
+            0%, 100% { transform: scale(1) rotate(0deg); }
+            25% { transform: scale(1.15) rotate(-8deg); }
+            50% { transform: scale(0.95) rotate(4deg); }
+            75% { transform: scale(1.1) rotate(-4deg); }
+        }
+        </style>
+        {% endif %}
     </section>
 
     {% if result %}
@@ -489,38 +579,70 @@ button:hover { filter: brightness(1.08); transform: translateY(-1px); }
 <script>
 const collectionData = {{ collection_json | safe }};
 const COLLECTION_KEY = "sharkMoodCollection";
+const CSRF_TOKEN = "{{ csrf_token() }}";
 
 function getCollectedSharks() {
     try {
-        return JSON.parse(localStorage.getItem(COLLECTION_KEY)) || [];
+        const data = JSON.parse(localStorage.getItem(COLLECTION_KEY)) || [];
+        // Must be array of {key, sig} objects
+        if (!Array.isArray(data)) return [];
+        return data.filter(item => item && typeof item.key === "string" && typeof item.sig === "string");
     } catch {
         return [];
     }
 }
 
-function saveCollectedSharks(items) {
-    localStorage.setItem(COLLECTION_KEY, JSON.stringify([...new Set(items)]));
+function getCollectedKeys() {
+    return getCollectedSharks().map(item => item.key);
 }
 
-function collectCurrentShark() {
+function saveCollectedSharks(items) {
+    localStorage.setItem(COLLECTION_KEY, JSON.stringify(items));
+}
+
+async function collectCurrentShark() {
     if (!currentMood || !currentMood.key || currentMood.key === null) return;
 
     const collected = getCollectedSharks();
-    if (!collected.includes(currentMood.key)) {
-        collected.push(currentMood.key);
+    if (collected.some(item => item.key === currentMood.key)) return;
+
+    try {
+        const resp = await fetch(`/api/sign/${currentMood.key}`);
+        if (!resp.ok) return;
+        const {key, sig} = await resp.json();
+        collected.push({key, sig});
         saveCollectedSharks(collected);
-    }
+    } catch {}
+}
+
+async function validateCollection() {
+    const collected = getCollectedSharks();
+    if (collected.length === 0) return;
+
+    try {
+        const resp = await fetch('/api/verify', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json', 'X-CSRFToken': CSRF_TOKEN},
+            body: JSON.stringify(collected),
+        });
+        if (!resp.ok) return;
+        const {valid} = await resp.json();
+        const cleaned = collected.filter(item => valid.includes(item.key));
+        if (cleaned.length !== collected.length) {
+            saveCollectedSharks(cleaned);
+        }
+    } catch {}
 }
 
 function renderCollection() {
     const grid = document.getElementById("collectionGrid");
     if (!grid) return;
 
-    const collected = getCollectedSharks();
+    const collectedKeys = getCollectedKeys();
     grid.innerHTML = "";
 
     Object.entries(collectionData).forEach(([key, item]) => {
-        const isCollected = collected.includes(key);
+        const isCollected = collectedKeys.includes(key);
 
         const card = document.createElement("div");
         card.className = `name-card ${isCollected ? "" : "locked"}`;
@@ -544,19 +666,26 @@ function openCollectionDetail(key) {
     const item = collectionData[key];
     if (!item) return;
 
-    document.getElementById("detailTitle").textContent = (item.emoji || '') + ' ' + item.title;
-    document.getElementById("detailSummary").textContent = item.summary;
-    document.getElementById("detailBody").innerHTML = `
-        <div style="font-size:64px;text-align:center;margin:12px 0;">${item.emoji || '🦈'}</div>
-        <p><strong>Species:</strong> ${item.species}</p>
-        <p><strong>Mood:</strong> ${item.mood}</p>
-        <p><strong>Habitat:</strong> ${item.habitat}</p>
-        <p><strong>Personality:</strong> ${item.personality}</p>
-        <p><strong>Keywords:</strong> ${item.keywords.join(", ")}</p>
-        <p style="margin-top: 14px;">${item.description}</p>
-    `;
+    const collectedKeys = getCollectedKeys();
+    if (!collectedKeys.includes(key)) return;
 
-    document.getElementById("collectionDetail").classList.add("active");
+    fetch(`/api/collection/${key}?collected=${collectedKeys.join(',')}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(detail => {
+            if (!detail) return;
+            document.getElementById("detailTitle").textContent = (detail.emoji || '') + ' ' + detail.title;
+            document.getElementById("detailSummary").textContent = detail.summary;
+            document.getElementById("detailBody").innerHTML = `
+                <div style="font-size:64px;text-align:center;margin:12px 0;">${detail.emoji || '🦈'}</div>
+                <p><strong>Species:</strong> ${detail.species}</p>
+                <p><strong>Mood:</strong> ${detail.mood}</p>
+                <p><strong>Habitat:</strong> ${detail.habitat}</p>
+                <p><strong>Personality:</strong> ${detail.personality}</p>
+                <p><strong>Keywords:</strong> ${detail.keywords.join(", ")}</p>
+                <p style="margin-top: 14px;">${detail.description}</p>
+            `;
+            document.getElementById("collectionDetail").classList.add("active");
+        });
 }
 
 function closeCollectionDetail() {
@@ -565,8 +694,11 @@ function closeCollectionDetail() {
 
 const currentMood = {{ current_mood_json | safe }};
 
-collectCurrentShark();
-renderCollection();
+(async () => {
+    await validateCollection();
+    await collectCurrentShark();
+    renderCollection();
+})();
 
 function openVisualizer() {
     const modal = document.getElementById("visualizerModal");
@@ -1289,7 +1421,7 @@ function createParticles(mood) {
 function createBackgroundSharks() {
     backgroundSharks = [];
 
-    const collected = getCollectedSharks();
+    const collected = getCollectedKeys();
 
     collected.forEach((key, index) => {
         const item = collectionData[key];
@@ -1762,6 +1894,38 @@ window.addEventListener("resize", () => {
 """
 
 
+@app.route("/api/sign/<key>")
+def api_sign_key(key):
+    """Return signature for a shark key (called after legitimate collection)."""
+    if key not in ALLOWED_SHARK_KEYS:
+        return {"error": "invalid key"}, 400
+    return {"key": key, "sig": sign_shark_key(key)}
+
+
+@app.route("/api/verify", methods=["POST"])
+def api_verify_collection():
+    """Verify a list of {key, sig} pairs, return only valid keys."""
+    data = request.get_json(silent=True) or []
+    valid = []
+    for item in data:
+        k = item.get("key", "")
+        s = item.get("sig", "")
+        if k in ALLOWED_SHARK_KEYS and hmac.compare_digest(sign_shark_key(k), s):
+            valid.append(k)
+    return {"valid": valid}
+
+
+@app.route("/api/collection/<key>")
+def api_collection_detail(key):
+    collected = request.args.get("collected", "").split(",")
+    if key not in collected:
+        return {"error": "locked"}, 403
+    item = get_collection_item(key)
+    if not item:
+        return {"error": "not found"}, 404
+    return item
+
+
 @app.route("/", methods=["GET", "POST"])
 def index():
     text = ""
@@ -1771,7 +1935,43 @@ def index():
     current_mood = {"key": None}
 
     if request.method == "POST":
+        ip = request.remote_addr or "unknown"
+        if is_rate_limited(ip):
+            return render_template_string(
+                HTML,
+                text=request.form.get("text", ""),
+                result=None, percents={}, moods=MOODS, analysis=None,
+                current_mood_json=json.dumps({"key": None}),
+                collection_items=get_collection_items(),
+                collection_json=json.dumps(
+                    {k: {"mood": v["mood"], "color": v["color"]} for k, v in get_collection_items().items()},
+                    ensure_ascii=False,
+                ),
+                rate_limited=True,
+                eaten_by_shark=False,
+            ), 429
+
         text = request.form.get("text", "").strip()
+
+        # Input length limit
+        if len(text) > 500:
+            text = text[:500]
+
+        if detect_injection(text):
+            return render_template_string(
+                HTML,
+                text=text,
+                result=None, percents={}, moods=MOODS, analysis=None,
+                current_mood_json=json.dumps({"key": None}),
+                collection_items=get_collection_items(),
+                collection_json=json.dumps(
+                    {k: {"mood": v["mood"], "color": v["color"]} for k, v in get_collection_items().items()},
+                    ensure_ascii=False,
+                ),
+                rate_limited=False,
+                eaten_by_shark=True,
+            )
+
         analysis = analyze_mood_gemini(text)
         main_key = analysis["main_key"]
         shark_key = analysis.get("shark_key", main_key)
@@ -1812,7 +2012,12 @@ def index():
         analysis=analysis,
         current_mood_json=json.dumps(current_mood, ensure_ascii=False),
         collection_items=get_collection_items(),
-        collection_json=json.dumps(get_collection_items(), ensure_ascii=False),
+        collection_json=json.dumps(
+            {k: {"mood": v["mood"], "color": v["color"]} for k, v in get_collection_items().items()},
+            ensure_ascii=False,
+        ),
+        rate_limited=False,
+        eaten_by_shark=False,
     )
 
 
